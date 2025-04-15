@@ -26,7 +26,7 @@ pub enum Sub {
         output: String
     },
     /// verify a string is sorted & distinct
-    VerifyStringSorted {
+    VerifyStringSortedDistinct {
         #[arg(short, long)]
         /// the input file name
         input: String,
@@ -177,7 +177,7 @@ fn main() {
             output_b_minus_a.flush().expect("FATAL: file flush failed");
             output_intersect.flush().expect("FATAL: file flush failed");
         }
-        Sub::VerifyStringSorted {
+        Sub::VerifyStringSortedDistinct {
             input,
         } => {
             let mut input = file!(<R> input).lines().enumerate().peekable();
@@ -192,7 +192,7 @@ fn main() {
                     println!("[ERROR] File Broken!");
                     return;
                 }
-                if &line.unwrap() > line_next.as_ref().unwrap() {
+                if &line.unwrap() >= line_next.as_ref().unwrap() {
                     println!("[ERROR] Not Sorted! AT LINE {at}");
                     return;
                 }
