@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use std::{collections::BTreeSet, io::BufRead};
 use serde_json::Value as JValue;
 use clap::Parser;
 
@@ -27,6 +27,19 @@ pub enum Sub {
     },
     /// diff two text files
     DiffSortedString {
+        #[arg(short, long)]
+        input_a: String,
+        #[arg(short, long)]
+        input_b: String,
+        #[arg(short, long)]
+        output_a_minus_b: String,
+        #[arg(short, long)]
+        output_b_minus_a: String,
+        #[arg(short, long)]
+        output_intersect: String
+    },
+    /// diff two text files using naive method
+    DiffSortedStringNaive {
         #[arg(short, long)]
         input_a: String,
         #[arg(short, long)]
@@ -124,6 +137,35 @@ fn main() {
                     input_a.next();
                     input_b.next();
                 }
+            }
+            output_a_minus_b.flush().expect("FATAL: file flush failed");
+            output_b_minus_a.flush().expect("FATAL: file flush failed");
+            output_intersect.flush().expect("FATAL: file flush failed");
+        }
+        Sub::DiffSortedStringNaive { 
+            input_a, 
+            input_b, 
+            output_a_minus_b, 
+            output_b_minus_a, 
+            output_intersect
+        } => {
+            use std::io::Write;
+            let input_a = file!(<R> input_a).lines().filter_map(|x| x.ok()).collect::<BTreeSet<String>>();
+            let input_b = file!(<R> input_b).lines().filter_map(|x| x.ok()).collect::<BTreeSet<String>>();
+            let mut output_a_minus_b = file!(<W> output_a_minus_b);
+            let mut output_b_minus_a = file!(<W> output_b_minus_a);
+            let mut output_intersect = file!(<W> output_intersect);
+            for line in input_a.difference(&input_b) {
+                writeln!(&mut output_a_minus_b, "{line}")
+                    .expect("FATAL: write to output failed");
+            }
+            for line in input_b.difference(&input_a) {
+                writeln!(&mut output_b_minus_a, "{line}")
+                    .expect("FATAL: write to output failed");
+            }
+            for line in input_a.intersection(&input_b) {
+                writeln!(&mut output_intersect, "{line}")
+                    .expect("FATAL: write to output failed");
             }
             output_a_minus_b.flush().expect("FATAL: file flush failed");
             output_b_minus_a.flush().expect("FATAL: file flush failed");
