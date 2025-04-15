@@ -182,6 +182,9 @@ fn main() {
         } => {
             let mut input = file!(<R> input).lines().enumerate().peekable();
             while let Some((at, line)) = input.next() {
+                if at % 100000 == 0 && at != 0 {
+                    println!("[PROGRESS] AT LINE {at}");
+                }
                 let Some((_, line_next)) = input.peek() else {
                     break;
                 };
