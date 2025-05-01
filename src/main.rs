@@ -216,9 +216,9 @@ fn main() {
                 };
                 let mut sha256 = sha2::Sha256::default();
                 for key in &keys {
-                    if let Some(JValue::String(value)) = map.get(key) {
-                        use std::io::Write;
-                        write!(&mut sha256, "{value}").expect("FATAL: write to output failed");
+                    use std::io::Write;
+                    if let Some(jvalue) = map.get(key) {
+                        write!(&mut sha256, "{}", jvalue.to_string()).expect("FATAL: write to output failed");
                     } else {
                         println!("WARNING: no such key in json map s.t. the value is string. ");
                         continue 'outer;
