@@ -1,6 +1,7 @@
-use std::{collections::BTreeSet, io::BufRead};
+use std::{collections::BTreeSet, io::{BufRead, Seek, Write}};
 use serde_json::Value as JValue;
 use clap::Parser;
+use sha2::Digest;
 
 #[derive(clap::Parser, std::fmt::Debug)]
 #[command(version, about, long_about = None)]
@@ -15,47 +16,67 @@ pub struct Cli {
 pub enum Sub {
     /// extract a given key for jsona file
     JsonArrayExtractKey {
-        #[arg(short, long)]
+        #[arg(long)]
         /// the key to extract
         key: String,
-        #[arg(short, long)]
+        #[arg(long)]
         /// the input file name
         input: String,
-        #[arg(short, long)]
+        #[arg(long)]
         /// the output file name
+        output: String
+    },
+    /// extract keys and hash these keys to a 
+    JsonArrayExtractSHA256 {
+        #[arg(long, value_delimiter = ',')]
+        keys: Vec<String>,
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
         output: String
     },
     /// verify a string is sorted & distinct
     VerifyStringSortedDistinct {
-        #[arg(short, long)]
         /// the input file name
+        #[arg(long)]
         input: String,
     },
     /// diff two text files
     DiffSortedString {
-        #[arg(short, long)]
+        #[arg(long)]
         input_a: String,
-        #[arg(short, long)]
+        #[arg(long)]
         input_b: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_a_minus_b: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_b_minus_a: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_intersect: String
     },
     /// diff two text files using naive method
     DiffSortedStringNaive {
-        #[arg(short, long)]
+        #[arg(long)]
         input_a: String,
-        #[arg(short, long)]
+        #[arg(long)]
         input_b: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_a_minus_b: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_b_minus_a: String,
-        #[arg(short, long)]
+        #[arg(long)]
         output_intersect: String
+    },
+    /// Run external sorting on a string
+    ExternalSort {
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        intermediate: String,
+        #[arg(long, default_value="4194304")]
+        batch_size: usize,
     }
 }
 
@@ -81,8 +102,131 @@ macro_rules! file {
     }
 }
 
+pub struct MergeStream<I: Iterator>(Option<I::Item>, I);
+
+impl<I: Iterator> MergeStream<I> {
+    fn new(mut iterator: I) -> Option<Self> {
+        iterator.next().map(|item| Self(Some(item), iterator))
+    }
+}
+
+impl<I: Iterator> PartialEq for MergeStream<I> where I::Item: Ord {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<I: Iterator> Eq for MergeStream<I> where I::Item: Ord {}
+
+impl<I: Iterator> PartialOrd for MergeStream<I> where I::Item: Ord {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.0.cmp(&other.0))
+    }
+}
+
+impl<I: Iterator> Ord for MergeStream<I> where I::Item: Ord {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<I: Iterator> Iterator for MergeStream<I> {
+    type Item = I::Item;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.is_none() {
+            None
+        } else if let Some(next) = self.1.next() {
+            self.0.replace(next)
+        } else {
+            self.0.take()
+        }
+    }
+}
+
 fn main() {
     match Cli::parse().sub {
+        Sub::ExternalSort { input, output, intermediate, batch_size } => {
+            let input = file!(<R> input);
+            let mut temp = file!(<W> intermediate);
+            let mut offsets = vec![];
+            let mut batch = vec![];
+            for line in input.lines() {
+                let Ok(line) = &line else {
+                    println!("WARNING: a line is somehow corrupted {line:?}");
+                    continue;
+                };
+                batch.push(line.to_string());
+                if batch.len() == batch_size {
+                    batch.sort();
+                    let Ok(sp) = temp.stream_position() else {
+                        println!("FATAL: cannnot get stream position from intermediate file");
+                        return;
+                    };
+                    offsets.push(sp);
+                    for s in batch.drain(..) {
+                        writeln!(&mut temp, "{s}").expect("FATAL: write to intermediate file failed");
+                    }
+                }
+            }
+            if batch.len() != 0 {
+                batch.sort();
+                let Ok(sp) = temp.stream_position() else {
+                    println!("FATAL: cannnot get stream position from intermediate file");
+                    return;
+                };
+                println!("STREAM POSITION: {sp}");
+                offsets.push(sp);
+                for s in batch.drain(..) {
+                    writeln!(&mut temp, "{s}").expect("FATAL: write to intermediate file failed");
+                }
+            }
+            drop(temp);
+            let mut merge_streams = std::collections::BinaryHeap::new();
+            for offset in offsets {
+                let mut temp = file!(<R> intermediate);
+                temp.seek(std::io::SeekFrom::Start(offset))
+                    .expect("FATAL: cannot open temporary file for seeking");
+                let temp = temp.lines()
+                    .map(|x| x.expect("FATAL: cannot read a line from intermediate file"))
+                    .take(batch_size);
+                let Some(stream) = MergeStream::new(temp) else {
+                    println!("WARNING: empty stream");
+                    return;
+                };
+                merge_streams.push(stream);
+            }
+            let mut output = file!(<W> output);
+            while let Some(mut top) = merge_streams.pop() {
+                let Some(next) = top.next() else { continue };
+                writeln!(&mut output, "{next}").expect("FATAL: write to final output failed");
+                merge_streams.push(top);
+            }
+        }
+        Sub::JsonArrayExtractSHA256 { keys, input, output } => {
+            let input = file!(<R> input);
+            let mut output = file!(<W> output);
+            'outer: for line in input.lines() {
+                let Ok(line) = &line else {
+                    println!("WARNING: a line is somehow corrupted {line:?}");
+                    continue;
+                };
+                let Ok(JValue::Object(map)) = serde_json::from_str::<JValue>(&line) else {
+                    println!("WARNING: a line cannot be parsed as a json map");
+                    continue;
+                };
+                let mut sha256 = sha2::Sha256::default();
+                for key in &keys {
+                    if let Some(JValue::String(value)) = map.get(key) {
+                        use std::io::Write;
+                        write!(&mut sha256, "{value}").expect("FATAL: write to output failed");
+                    } else {
+                        println!("WARNING: no such key in json map s.t. the value is string. ");
+                        continue 'outer;
+                    }
+                }
+                writeln!(&mut output, "0x{:x}", sha256.finalize()).expect("FATAL: write to output failed");
+            }
+        }
         Sub::JsonArrayExtractKey { key, input, output } => {
             let input = file!(<R> input);
             let mut output = file!(<W> output);
@@ -148,7 +292,7 @@ fn main() {
             output_b_minus_a.flush().expect("FATAL: file flush failed");
             output_intersect.flush().expect("FATAL: file flush failed");
         }
-        Sub::DiffSortedStringNaive { 
+        Sub::DiffSortedStringNaive {
             input_a, 
             input_b, 
             output_a_minus_b, 
