@@ -5,6 +5,5 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.35", features = ["derive"] }
-hex-literal = "1.0.0"
 serde_json = { version = "1.0.140", features = ["indexmap"] }
 sha2 = "0.10.9"
