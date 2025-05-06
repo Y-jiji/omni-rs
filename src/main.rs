@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, io::{BufRead, Seek, Write}};
+use std::{collections::BTreeSet, fs::remove_file, io::{BufRead, Seek, Write}};
 use serde_json::Value as JValue;
 use clap::Parser;
 use sha2::Digest;
@@ -201,6 +201,7 @@ fn main() {
                 writeln!(&mut output, "{next}").expect("FATAL: write to final output failed");
                 merge_streams.push(top);
             }
+            remove_file(intermediate).expect("FATAL: cannot remove intermediate file");
         }
         Sub::JsonArrayExtractSHA256 { keys, input, output } => {
             let input = file!(<R> input);
