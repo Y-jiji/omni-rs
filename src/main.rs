@@ -201,7 +201,7 @@ fn main() {
                 writeln!(&mut output, "{next}").expect("FATAL: write to final output failed");
                 merge_streams.push(Reverse(top));
             }
-            // remove_file(intermediate).expect("FATAL: cannot remove intermediate file");
+            remove_file(intermediate).expect("FATAL: cannot remove intermediate file");
         }
         Sub::JsonArrayExtractSHA256 { keys, input, output } => {
             let input = file!(<R> input);
